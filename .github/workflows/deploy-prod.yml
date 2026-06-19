@@ -1,4 +1,4 @@
-name: Migrate prod DB
+name: Apply Alembic migrations (prod)
 
 # Applies Alembic migrations to the PRODUCTION MySQL the moment an approved PR lands on
 # main. Runs on the self-hosted runner on the EC2 host (same box as the grader) so it can
@@ -20,35 +20,79 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Host-only env file holding DATABASE_URL for prod (never in git).
+  # Host-only env file holding the prod DB_* creds (never in git).
   ALEMBIC_ENV_FILE: ${{ vars.ALEMBIC_ENV_FILE || '/opt/apguru/alembic/.env' }}
   PY_IMAGE: python:3.13-slim
 
 jobs:
-  migrate:
+  alembic-upgrade:
+    name: alembic upgrade head (prod)
     # Pin to the second runner registered on the EC2 host for THIS repo (label below).
     runs-on: [self-hosted, apguru-alembic]
     steps:
       - name: Checkout merged main commit
         uses: actions/checkout@v4
 
-      - name: Guard single head + apply migrations
+      - name: alembic upgrade head
         run: |
-          set -euo pipefail
+          # No `-e`: we capture the container's exit code, always write a summary,
+          # then exit with that code so the job status still reflects success/failure.
+          set -uo pipefail
+          log="$(mktemp)"
+
           docker run --rm \
             --env-file "$ALEMBIC_ENV_FILE" \
             -v "$GITHUB_WORKSPACE":/repo -w /repo \
             "$PY_IMAGE" \
             sh -eu -c '
-              pip install --no-cache-dir -r requirements.txt
-              echo "== Heads (must be exactly one) =="
+              pip install --no-cache-dir -q -r requirements.txt
+              echo "== alembic heads (must be exactly one) =="
               alembic heads
-              [ "$(alembic heads | grep -c "(head)")" -eq 1 ] || {
-                echo "::error::Expected exactly one Alembic head — reconcile before migrating."; exit 1; }
-              echo "== Prod current revision (before) =="
-              alembic current
-              echo "== Applying: alembic upgrade head =="
+              if [ "$(alembic heads | grep -c "(head)")" -ne 1 ]; then
+                echo "MULTIHEAD=$(alembic heads | grep -c "(head)")"; exit 3
+              fi
+              before=$(alembic current 2>/dev/null | head -n1 | cut -d" " -f1)
+              echo "BEFORE=${before:-<none>}"
+              echo "== alembic upgrade head =="
               alembic upgrade head
-              echo "== Prod current revision (after) =="
-              alembic current
-            '
+              after=$(alembic current 2>/dev/null | head -n1 | cut -d" " -f1)
+              echo "AFTER=${after:-<none>}"
+            ' 2>&1 | tee "$log"
+          rc=${PIPESTATUS[0]}
+
+          before=$(sed -n "s/^BEFORE=//p" "$log" | tail -n1)
+          after=$(sed -n "s/^AFTER=//p"  "$log" | tail -n1)
+          multihead=$(sed -n "s/^MULTIHEAD=//p" "$log" | tail -n1)
+          applied=$(grep -oE "Running upgrade [0-9A-Za-z_]+ -> [0-9A-Za-z_]+" "$log" | sed "s/Running upgrade //" || true)
+
+          # --- Outcome -> run summary panel + a top-of-run annotation -------------
+          {
+            echo "### Alembic — production migration"
+            echo ""
+            if [ "$rc" -eq 3 ]; then
+              echo "❌ **Refused:** expected exactly one head, found \`${multihead:-?}\`. Reconcile the chain to a single head, then re-run."
+            elif [ "$rc" -ne 0 ]; then
+              echo "❌ **Migration failed** (exit \`$rc\`). See the step log above (bad creds, DB unreachable, or a broken migration)."
+            elif [ -n "$applied" ]; then
+              echo "✅ **Upgraded** prod: \`${before:-<none>}\` → \`${after}\`"
+              echo ""
+              echo "Revisions applied:"
+              echo '```'
+              echo "$applied"
+              echo '```'
+            else
+              echo "✅ **Already at head** — prod is at \`${after:-$before}\`; nothing to apply."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$rc" -eq 3 ]; then
+            echo "::error title=Alembic::Multiple heads (${multihead:-?}) — refused to migrate"
+          elif [ "$rc" -ne 0 ]; then
+            echo "::error title=Alembic::alembic upgrade head failed (exit $rc)"
+          elif [ -n "$applied" ]; then
+            echo "::notice title=Alembic::Upgraded prod ${before:-<none>} -> ${after}"
+          else
+            echo "::notice title=Alembic::No migrations to apply — prod already at ${after:-$before}"
+          fi
+
+          exit "$rc"
