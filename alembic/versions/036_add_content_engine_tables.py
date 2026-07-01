@@ -48,6 +48,11 @@ convention); ``job`` / ``hash_map`` / ``pending_mapping`` keep their former key
 (``jid``; ``(content_hash, table_name)``; ``question_id``) as a UNIQUE constraint
 so idempotent upserts and the foreign keys below still work.
 
+This revision also drops the obsolete ``content_engine_alembic_version`` table
+(content-engine's retired standalone Alembic tracker) if present — this repo now
+owns the schema via the shared ``alembic_version``. ``DROP … IF EXISTS`` so it is
+a no-op on DBs that never had it (e.g. prod).
+
 Revision ID: 036
 Create Date: 2026-06-30
 """
@@ -165,6 +170,11 @@ CREATE TABLE IF NOT EXISTS `content_engine_pending_mapping` (
 
 
 def upgrade() -> None:
+    # Retire content-engine's OLD standalone Alembic bookkeeping: it tracked its
+    # own migrations in a separate `content_engine_alembic_version` table, now
+    # obsolete since this repo owns the schema via the shared `alembic_version`.
+    # Idempotent: no-op on DBs that never had it (e.g. prod).
+    op.execute("DROP TABLE IF EXISTS `content_engine_alembic_version`")
     # Parent first, then children (FK order); pending_mapping last (FKs into the
     # shared questions_online / passage, which already exist on every target DB).
     op.execute(JOB_DDL)
