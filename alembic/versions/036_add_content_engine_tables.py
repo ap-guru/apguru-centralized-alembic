@@ -43,6 +43,11 @@ environment that already has these tables (UAT / prod, created by content-engine
 before it was centralized) this revision is a pure no-op that only advances the
 ``alembic_version`` stamp; on a fresh AP Guru DB it builds them.
 
+Every table has a surrogate ``id bigint AUTO_INCREMENT`` PRIMARY KEY (project
+convention); ``job`` / ``hash_map`` / ``pending_mapping`` keep their former key
+(``jid``; ``(content_hash, table_name)``; ``question_id``) as a UNIQUE constraint
+so idempotent upserts and the foreign keys below still work.
+
 Revision ID: 036
 Create Date: 2026-06-30
 """
@@ -57,6 +62,7 @@ depends_on = None
 
 JOB_DDL = """
 CREATE TABLE IF NOT EXISTS `content_engine_job` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
   `jid` varchar(16) NOT NULL,
   `course_id` int DEFAULT NULL,
   `test_type` varchar(16) DEFAULT NULL,
@@ -70,7 +76,8 @@ CREATE TABLE IF NOT EXISTS `content_engine_job` (
   `doc` json DEFAULT NULL COMMENT 'Parsed document + reviewer working draft (was data/jobs/<jid>/extracted.json)',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`jid`),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_job_jid` (`jid`),
   KEY `idx_overall_status` (`overall_status`),
   KEY `idx_recovery` (`overall_status`,`worker_heartbeat`),
   KEY `idx_primary_pdf_sha` (`primary_pdf_sha`)
@@ -100,12 +107,14 @@ CREATE TABLE IF NOT EXISTS `content_engine_job_stage` (
 
 HASH_MAP_DDL = """
 CREATE TABLE IF NOT EXISTS `content_engine_hash_map` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
   `content_hash` char(16) NOT NULL,
   `table_name` varchar(64) NOT NULL,
   `row_id` int NOT NULL,
   `jid` varchar(16) DEFAULT NULL COMMENT 'Owning job; nullable, stamped on promote/re-promote',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`content_hash`,`table_name`),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_hash_map` (`content_hash`,`table_name`),
   KEY `idx_table_row` (`table_name`,`row_id`),
   KEY `idx_hashmap_jid` (`jid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
@@ -137,13 +146,15 @@ CREATE TABLE IF NOT EXISTS `content_engine_ocr_raw_page` (
 
 PENDING_MAPPING_DDL = """
 CREATE TABLE IF NOT EXISTS `content_engine_pending_mapping` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
   `question_id` int NOT NULL COMMENT 'questions_online.id this intended mapping belongs to',
   `passage_id` int DEFAULT NULL,
   `topic_id` int DEFAULT NULL,
   `sub_topic_id` int DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`question_id`),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_pending_question` (`question_id`),
   KEY `idx_pending_passage` (`passage_id`),
   KEY `idx_pending_topic` (`topic_id`),
   KEY `idx_pending_subtopic` (`sub_topic_id`),
