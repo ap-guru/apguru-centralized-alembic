@@ -1,4 +1,4 @@
-"""Add ``ai_performance_analysis`` to ``online_student_test_completed``.
+"""Add ``ai_analysis_json`` to ``online_student_test_completed``.
 
 The "where the marks went" feature (apguru-analytics-dashboard) persists
 AI-derived, per-(student, test) analysis. Rather than one column per analysis
@@ -7,7 +7,7 @@ goes into a **single JSON envelope** on the existing completion row (which
 already carries ``student_id`` and ``test_id``, both indexed). New analyses
 become new *keys* inside the JSON, not new columns:
 
-  - ``ai_performance_analysis`` (JSON) — envelope holding, today,
+  - ``ai_analysis_json`` (JSON) — envelope holding, today,
     ``where_marks_went`` (student+teacher facing) and
     ``teacher_talking_points`` (teacher-only), with room for future blobs.
     The app validates/serialises the structure through a Pydantic model, so the
@@ -43,11 +43,11 @@ depends_on = None
 
 
 _TABLE = "online_student_test_completed"
-_COLUMN = "ai_performance_analysis"
+_COLUMN = "ai_analysis_json"
 # Embedded in a single-quoted ``@ddl`` string below, so the COMMENT's single
 # quotes are DOUBLED (SQL escaping) — mirrors 038's ``COMMENT ''...''`` style.
 _COLUMN_DEF = (
-    "`ai_performance_analysis` json NULL "
+    "`ai_analysis_json` json NULL "
     "COMMENT ''AI-derived analysis for this student+test - JSON envelope "
     "(where_marks_went, teacher_talking_points, and future blobs)''"
 )
