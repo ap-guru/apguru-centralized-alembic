@@ -1,20 +1,22 @@
 """Add marks-report columns to ``online_student_test_completed``.
 
 The "where the marks went" feature (apguru-analytics-dashboard) persists two
-per-(student, test) JSON artifacts plus a provenance stamp. Rather than a new
-table, they hang off the existing completion row — which already carries
-``student_id`` and ``test_id`` (both indexed) — so the report is read/written
-keyed by that pair with no extra join:
+per-(student, test) JSON artifacts. Rather than a new table, they hang off the
+existing completion row — which already carries ``student_id`` and ``test_id``
+(both indexed) — so the report is read/written keyed by that pair with no extra
+join:
 
   - ``where_marks_went_json``       — student+teacher-facing breakdown of where
     marks were lost (authored student-safe). Shown to BOTH roles.
   - ``teacher_talking_points_json`` — teacher-only; the exact points to raise
     with the student in the next class. Omitted from student responses at the
     API layer.
-  - ``marks_report_generated_at``   — when the report JSON was generated (the
-    write-once provenance stamp; NULL until first generated).
 
-All three are nullable and purely additive — existing completion rows read as
+No dedicated ``generated_at`` column: NULL ``where_marks_went_json`` already
+signals "no report yet", and the API surfaces the row's existing ``created_at``
+as ``generated_at`` — so no redundant timestamp is stored.
+
+Both columns are nullable and purely additive — existing completion rows read as
 "no report yet" (the app treats a NULL ``where_marks_went_json`` as absent and
 lazily generates on first read). JSON columns cannot carry a DEFAULT, hence
 NULL. Columns are appended at the end of the row (no ``AFTER``) so MySQL 8 can
@@ -61,11 +63,6 @@ _COLUMNS = [
         "teacher_talking_points_json",
         "`teacher_talking_points_json` json NULL "
         "COMMENT ''Teacher-only talking points JSON''",
-    ),
-    (
-        "marks_report_generated_at",
-        "`marks_report_generated_at` datetime NULL "
-        "COMMENT ''When the marks report JSON was generated''",
     ),
 ]
 
